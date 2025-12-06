@@ -3,3 +3,7 @@ pandas
 python-dotenv
 requests
 pandas-ta
+pyqt5
+fastapi
+uvicorn
+yfinance

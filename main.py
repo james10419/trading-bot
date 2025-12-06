@@ -56,21 +56,30 @@ class TradingBot:
     async def initialize(self):
         # 1. Check Bridge Connection
         if not self.kiwoom.get_status():
-            logging.critical("❌ Kiwoom REST Bridge is NOT running! Start 'kiwoom_bridge.py' (32-bit) first.")
-            self.notifier.send_message("❌ Bridge Connection Failed. Please check server.")
+            logging.critical("❌ 키움 REST 브리지 실행 안됨! 'kiwoom_bridge.py' (32비트)를 먼저 실행하세요.")
+            self.notifier.send_message("❌ 브리지 연결 실패. 서버를 확인하세요.")
             return False
 
         # 2. Analyze Macro Conditions
-        logging.info("🌍 Analyzing Macro Data...")
+        logging.info("🌍 거시 경제 데이터 분석 중...")
         macro_data = self.macro.fetch_macro_data()
         regime = self.macro.analyze_market_regime(macro_data)
         
-        msg = f"🚀 System Initialized\n- Regime: {regime}\n- VIX: {macro_data.get('VIX', 'N/A')}\n- US10Y: {macro_data.get('US10Y', 'N/A')}"
+        # Translate Regime
+        regime_kor = {
+            "EXTREME_FEAR": "공포 (Extreme Fear)",
+            "FEAR": "두려움 (Fear)",
+            "HIGH_YIELD_CAUTION": "고금리 주의 (High Yield)",
+            "NORMAL": "평범 (Normal)",
+            "NEUTRAL": "중립 (Neutral)"
+        }.get(regime, regime)
+
+        msg = f"🚀 시스템 초기화 완료\n- 시장 상황: {regime_kor}\n- VIX(공포지수): {macro_data.get('VIX', 'N/A')}\n- 미10년물금리: {macro_data.get('US10Y', 'N/A')}"
         logging.info(msg)
         self.notifier.send_message(msg)
         
         if regime == "EXTREME_FEAR":
-            logging.warning("⚠️ Market in Extreme Fear. Trading might be limited.")
+            logging.warning("⚠️ 시장 극단적 공포 단계. 매매 제한 권장.")
             # Could adjust risk config here
         
         return True
@@ -82,10 +91,10 @@ class TradingBot:
         cond_idx = conditions.get(TARGET_CONDITION_NAME)
         
         if cond_idx is None:
-            logging.warning(f"Condition '{TARGET_CONDITION_NAME}' not found in HTS. Skipping search.")
+            logging.warning(f"조건식 '{TARGET_CONDITION_NAME}'을 HTS에서 찾을 수 없습니다. 검색 건너뜀.")
             return
 
-        logging.info(f"🔎 Scanning Cond: {TARGET_CONDITION_NAME} (Idx: {cond_idx})")
+        logging.info(f"🔎 조건식 검색 중: {TARGET_CONDITION_NAME} (인덱스: {cond_idx})")
         resp = self.kiwoom.start_condition(SCREEN_NO, TARGET_CONDITION_NAME, cond_idx)
         
         # --- Simulation / Demonstration Logic ---
@@ -94,7 +103,7 @@ class TradingBot:
         # the Technical Analysis features requested by the user.
         target_code = "005930.KS" # Samsung Electronics (Yahoo Ticker)
         
-        logging.info(f"🧐 Analyzing Target: {target_code}")
+        logging.info(f"🧐 종목 분석 대상: {target_code}")
         tech_data = self.macro.fetch_technical_indicators(target_code)
         
         if tech_data is not None:
@@ -103,18 +112,18 @@ class TradingBot:
             fib618 = tech_data['Fib_0.618']
             rsi = tech_data['RSI']
             
-            logging.info(f"📊 Tech Analysis [{target_code}]")
-            logging.info(f"   Price: {price:.0f} | MA20: {ma20:.0f} | RSI: {rsi:.1f}")
-            logging.info(f"   Fib(0.618): {tech_data['Fib_0.618']:.0f} | Fib(0.382): {tech_data['Fib_0.382']:.0f}")
+            logging.info(f"📊 기술적 분석 결과 [{target_code}]")
+            logging.info(f"   현재가: {price:.0f} | 20일이평: {ma20:.0f} | RSI: {rsi:.1f}")
+            logging.info(f"   피보나치(0.618): {tech_data['Fib_0.618']:.0f} | 피보나치(0.382): {tech_data['Fib_0.382']:.0f}")
             
             # Simple Strategy Example
             if price > ma20 and rsi < 70:
-                logging.info(f"✅ BUY SIGNAL: Price > MA20 & RSI({rsi:.1f}) < 70")
+                logging.info(f"✅ 매수 신호: 가격 > 20일이평 & RSI({rsi:.1f}) < 70")
                 # self.kiwoom.send_order(...) # Would send real order here
             else:
-                logging.info("⏸️ HOLD: Conditions not met.")
+                logging.info("⏸️ 대기: 진입 조건 미충족.")
         else:
-            logging.warning("Failed to fetch technical data.")
+            logging.warning("기술적 지표 데이터를 가져오는데 실패했습니다.")
 
     async def check_exit_conditions(self):
         # Check all active positions against Risk Manager

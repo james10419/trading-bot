@@ -11,6 +11,7 @@ import ccxt.async_support as ccxt
 import asyncio
 import os
 import logging
+import random
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -25,6 +26,7 @@ from market_intelligence import MarketIntelligence
 load_dotenv()
 
 # --- Configuration ---
+PAPER_TRADING = True         # Set to False for REAL TRADING
 EXCHANGE_NAME = 'upbit'
 SYMBOL = 'BTC/KRW'
 BUDGET = 500000          # Total Trading Budget (KRW)
@@ -48,6 +50,61 @@ logging.basicConfig(
     ]
 )
 
+class MockExchange:
+    """Simulates exchange operations for Paper Trading."""
+    def __init__(self, exchange_real):
+        self.exchange = exchange_real # Use real exchange for data fetching
+        self.orders = {}
+
+    async def load_markets(self):
+        return await self.exchange.load_markets()
+
+    async def fetch_ohlcv(self, symbol, timeframe='1h', limit=100):
+        # Pass through to real exchange for data
+        return await self.exchange.fetch_ohlcv(symbol, timeframe, limit)
+
+    async def fetch_ticker(self, symbol):
+        # Pass through to real exchange for data
+        return await self.exchange.fetch_ticker(symbol)
+
+    async def create_market_buy_order(self, symbol, amount):
+        ticker = await self.fetch_ticker(symbol)
+        price = ticker['last']
+        logging.info(f"[PAPER] Simulating BUY {symbol}: {amount} @ {price}")
+        
+        # Simulate order response
+        return {
+            'id': f'sim-buy-{int(datetime.now().timestamp())}',
+            'symbol': symbol,
+            'type': 'market',
+            'side': 'buy',
+            'amount': amount,
+            'price': price,
+            'average': price,
+            'filled': amount,
+            'timestamp': int(datetime.now().timestamp() * 1000)
+        }
+
+    async def create_market_sell_order(self, symbol, amount):
+        ticker = await self.fetch_ticker(symbol)
+        price = ticker['last']
+        logging.info(f"[PAPER] Simulating SELL {symbol}: {amount} @ {price}")
+        
+        return {
+            'id': f'sim-sell-{int(datetime.now().timestamp())}',
+            'symbol': symbol,
+            'type': 'market',
+            'side': 'sell',
+            'amount': amount,
+            'price': price,
+            'average': price,
+            'filled': amount,
+            'timestamp': int(datetime.now().timestamp() * 1000)
+        }
+        
+    async def close(self):
+        await self.exchange.close()
+
 class TradingBot:
     def __init__(self):
         self.symbol = SYMBOL
@@ -59,17 +116,43 @@ class TradingBot:
         self.perf_logger = PerformanceLogger()
         self.risk_manager = RiskManager(RISK_CONFIG)
         self.market_intel = MarketIntelligence()
-        self.exchange = self._init_exchange()
+        
+        # Initialize Exchange
+        self._real_exchange = self._init_exchange_connection()
+        
+        if PAPER_TRADING:
+            logging.warning("⚠️ STARTING IN PAPER TRADING MODE ⚠️")
+            self.exchange = MockExchange(self._real_exchange)
+            self.notifier.send_message(f"🧪 Paper Trading Bot Started\n- Symbol: {self.symbol}")
+        else:
+            logging.warning("🚨 STARTING IN REAL TRADING MODE 🚨")
+            self.exchange = self._real_exchange
+            
         self.strategy = self._init_strategy()
 
-    def _init_exchange(self):
+    def _init_exchange_connection(self):
         api_key = os.getenv(f'{EXCHANGE_NAME.upper()}_ACCESS_KEY')
         secret_key = os.getenv(f'{EXCHANGE_NAME.upper()}_SECRET_KEY')
+        
+        # For Paper Trading, allow missing keys if we only need public data (though CCXT often needs keys for private endpoints, fetching OHLCV is usually public)
+        # However, to keep it simple, we'll still require keys or use placeholders if totally public.
+        # But user likely wants to test WITH their keys eventually. 
+        # Let's keep logic: if keys missing and PAPER_TRADING is True, maybe warn but proceed?
+        # Actually safer to enforce keys or use a public-only instance if possible, but CCXT structure desires keys.
+        
         if not api_key or not secret_key:
-            raise ValueError("API Keys missing in .env")
+             if PAPER_TRADING:
+                 logging.warning("API Keys missing! Using public-only mode for Paper Trading data.")
+                 # Initialize without keys
+                 exchange_class = getattr(ccxt, EXCHANGE_NAME)
+                 return exchange_class()
+             else:
+                raise ValueError("API Keys missing in .env for Real Trading")
         
         exchange_class = getattr(ccxt, EXCHANGE_NAME)
         return exchange_class({'apiKey': api_key, 'secret': secret_key})
+
+    # _init_exchange removed in favor of _init_exchange_connection logic above
 
     def _init_strategy(self):
         if STRATEGY_NAME == 'DualEMA':
@@ -84,7 +167,9 @@ class TradingBot:
     async def initialize(self):
         try:
             await self.exchange.load_markets()
-            self.notifier.send_message(f"🚀 Bot Started\n- Strategy: {STRATEGY_NAME}\n- Symbol: {self.symbol}")
+            await self.exchange.load_markets()
+            mode = "🧪 PAPER TRADING" if PAPER_TRADING else "💸 REAL TRADING"
+            self.notifier.send_message(f"🚀 Bot Initialized ({mode})\n- Strategy: {STRATEGY_NAME}\n- Symbol: {self.symbol}")
             return True
         except Exception as e:
             logging.error(f"Initialization Failed: {e}")
